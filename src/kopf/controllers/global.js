@@ -3,7 +3,7 @@ kopf.controller('GlobalController', ['$scope', '$location', '$sce', '$window',
   function($scope, $location, $sce, $window, AlertService, ElasticService,
            ExternalSettingsService, PageService) {
 
-    $scope.version = '2.0.1';
+    $scope.version = '5.0.0';
 
     $scope.modal = new ModalControls();
 
@@ -42,7 +42,8 @@ kopf.controller('GlobalController', ['$scope', '$location', '$sce', '$window',
           var location = $scope.readParameter('location');
           var url = $location.absUrl();
           if (isDefined(location) ||
-              isDefined(location = ExternalSettingsService.getElasticsearchHost())) {
+              isDefined(location = ExternalSettingsService
+                .getElasticsearchHost())) {
             host = location;
           } else if (url.indexOf('/_plugin/kopf') > -1) {
             host = url.substring(0, url.indexOf('/_plugin/kopf'));

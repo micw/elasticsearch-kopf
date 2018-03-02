@@ -149,6 +149,7 @@ kopf.controller('AliasesController', ['$scope', 'AlertService',
       if (!angular.isDefined($scope.editor)) {
         $scope.editor = AceEditorService.init('alias-filter-editor');
       }
+      $scope.editor.setValue('{}');
     };
 
     $scope.addAlias = function() {
@@ -1222,7 +1223,7 @@ kopf.controller('GlobalController', ['$scope', '$location', '$sce', '$window',
   function($scope, $location, $sce, $window, AlertService, ElasticService,
            ExternalSettingsService, PageService) {
 
-    $scope.version = '2.0.1';
+    $scope.version = '5.0.0';
 
     $scope.modal = new ModalControls();
 
@@ -1260,7 +1261,9 @@ kopf.controller('GlobalController', ['$scope', '$location', '$sce', '$window',
         if ($location.host() !== '') { // not opening from fs
           var location = $scope.readParameter('location');
           var url = $location.absUrl();
-          if (isDefined(location)) {
+          if (isDefined(location) ||
+              isDefined(location = ExternalSettingsService
+                .getElasticsearchHost())) {
             host = location;
           } else if (url.indexOf('/_plugin/kopf') > -1) {
             host = url.substring(0, url.indexOf('/_plugin/kopf'));
@@ -1826,6 +1829,9 @@ kopf.controller('RestController', ['$scope', '$location', '$timeout',
       var method = $scope.request.method;
       var host = ElasticService.getHost();
       var path = encodeURI($scope.request.path);
+      if (path.substring(0, 1) !== '/') {
+        path = '/' + path;
+      }
       var body = $scope.editor.getValue();
       var curl = 'curl -X' + method + ' \'' + host + path + '\'';
       if (['POST', 'PUT'].indexOf(method) >= 0) {
@@ -3224,13 +3230,10 @@ function Node(nodeId, nodeStats, nodeInfo) {
   this.transportAddress = nodeInfo.transport_address;
   this.host = nodeInfo.host;
 
-  var attributes = getProperty(nodeInfo, 'attributes', {});
-  var master = attributes.master === 'false' ? false : true;
-  var data = attributes.data === 'false' ? false : true;
-  var client = attributes.client === 'true' ? true : false;
-  this.master = master && !client;
-  this.data = data && !client;
-  this.client = client || !master && !data;
+  var roles = getProperty(nodeInfo, 'roles', []);
+  this.master = roles.indexOf('master') < 0 ? false : true;
+  this.data = roles.indexOf('data') < 0 ? false : true;
+  this.client = !this.master && !this.data;
   this.current_master = false;
 
   this.stats = nodeStats;
@@ -3255,7 +3258,8 @@ function Node(nodeId, nodeStats, nodeInfo) {
 
   this.cpu = getProperty(this.stats, 'process.cpu.percent');
 
-  this.load_average = getProperty(this.stats, 'os.load_average');
+  var loadAverage = getProperty(this.stats, 'os.cpu.load_average');
+  this.load_average = loadAverage === undefined ? 0 : loadAverage['1m'];
 
   this.setCurrentMaster = function() {
     this.current_master = true;
@@ -4761,7 +4765,7 @@ kopf.factory('ElasticService', ['$http', '$q', '$timeout', '$location',
      * @callback error - invoked on error
      */
     this.optimizeIndex = function(index, success, error) {
-      var path = '/' + encode(index) + '/_optimize';
+      var path = '/' + encode(index) + '/_forcemerge';
       this.clusterRequest('POST', path, {}, {}, success, error);
     };
 
@@ -4992,7 +4996,9 @@ kopf.factory('ElasticService', ['$http', '$q', '$timeout', '$location',
         data.actions.push({add: a.info()});
       });
       remove.forEach(function(a) {
-        data.actions.push({remove: a.info()});
+        var info = a.info();
+        delete info['filter'];
+        data.actions.push({remove: info});
       });
       this.clusterRequest('POST', '/_aliases', {}, data, success, error);
     };
@@ -5355,10 +5361,10 @@ kopf.factory('ElasticService', ['$http', '$q', '$timeout', '$location',
         $http.get(host +
             '/_cluster/state/master_node,blocks?local=true',
             params),
-        $http.get(host + '/_nodes/stats/jvm,fs,os?local=true', params),
+        $http.get(host + '/_nodes/stats/jvm,fs,os', params),
         $http.get(host + '/_cluster/settings?local=true', params),
         $http.get(host + '/_cluster/health?local=true', params),
-        $http.get(host + '/_nodes/_all/os,jvm?local=true', params)
+        $http.get(host + '/_nodes/_all/os,jvm', params)
       ]).then(
           function(responses) {
             try {
@@ -5562,6 +5568,8 @@ kopf.factory('ExternalSettingsService', ['DebugService',
 
     var KEY = 'kopfSettings';
 
+    var ES_HOST = 'location';
+
     var ES_ROOT_PATH = 'elasticsearch_root_path';
 
     var WITH_CREDENTIALS = 'with_credentials';
@@ -5611,6 +5619,10 @@ kopf.factory('ExternalSettingsService', ['DebugService',
         };
       });
       return settings;
+    };
+
+    this.getElasticsearchHost = function() {
+      return this.getSettings()[ES_HOST];
     };
 
     this.getElasticsearchRootPath = function() {
